@@ -1,0 +1,320 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Word Suggestions</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        .container {
+            margin-top: 30px;
+        }
+
+        .input-container {
+            position: relative;
+            margin-bottom: 20px;
+        }
+
+        .text-input {
+            width: 100%;
+            padding: 10px;
+            font-size: 16px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background: transparent;
+            position: relative;
+            z-index: 1;
+        }
+
+        .ghost-text {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            /* Dynamically updated in JS */
+            color: #aaa;
+            font-size: 16px;
+            pointer-events: none;
+            white-space: pre;
+        }
+
+
+        .suggestions-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 10px;
+        }
+
+        .suggestion {
+            background-color: #f0f0f0;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+
+        .suggestion:hover {
+            background-color: #e0e0e0;
+        }
+
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f8f8f8;
+            border-radius: 4px;
+        }
+
+        .error {
+            color: #d9534f;
+            font-weight: bold;
+
+        }
+
+        .info-box {
+            background-color: #f8f9fa;
+            border-left: 4px solid #007bff;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 0 4px 4px 0;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Customer Support Chat Autocomplete</h1>
+
+    <div class="container">
+        {% if not csv_processed %}
+        <div class="status error">
+            <p>Error: Could not process the CSV file. Please check the file path and try again.</p>
+        </div>
+        {% else %}
+        <div class="info-box">
+            <h3>CSV file processed successfully!</h3>
+            <p>Start typing in the box below to see real-time word suggestions.</p>
+            <ul>
+                <li>Press <strong>Tab</strong> to accept the suggested word</li>
+                <li>Continue typing to ignore suggestions</li>
+                <li>Click on alternate suggestions below if you prefer them</li>
+            </ul>
+        </div>
+
+        <div id="editor">
+            <div class="input-container">
+                <textarea id="text-input" class="text-input" rows="5"
+                    placeholder="Type your message here..."></textarea>
+                <div id="ghost-text" class="ghost-text"></div>
+            </div>
+
+            <div id="suggestions" class="suggestions-container"></div>
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        // Global variables
+        let typingTimer;
+        let doneTypingInterval = 200; // time in ms
+        let currentSuggestion = '';
+        let allSuggestions = [];
+
+        // DOM elements
+        const textInput = document.getElementById('text-input');
+        const ghostText = document.getElementById('ghost-text');
+        const suggestionsContainer = document.getElementById('suggestions');
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function () {
+            if (textInput) {
+                textInput.addEventListener('input', handleInput);
+                textInput.addEventListener('keydown', handleKeyDown);
+                textInput.focus();
+            }
+        });
+
+        // Handle input changes
+        function handleInput() {
+            clearTimeout(typingTimer);
+            ghostText.textContent = '';
+            currentSuggestion = '';
+
+            const text = textInput.value;
+            if (text.trim() === '') {
+                suggestionsContainer.innerHTML = '';
+                return;
+            }
+
+            typingTimer = setTimeout(() => getSuggestions(text), doneTypingInterval);
+        }
+
+        // Handle special keys
+        function handleKeyDown(e) {
+            // Tab key to accept suggestion
+            if (e.key === 'Tab' && currentSuggestion) {
+                e.preventDefault();
+                acceptSuggestion();
+            }
+        }
+
+        // Get suggestions from the server
+        function getSuggestions(text) {
+            fetch('/predict', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ text: text })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    allSuggestions = data.suggestions || [];
+                    displaySuggestions();
+                })
+                .catch(error => {
+                    console.error('Error getting suggestions:', error);
+                });
+        }
+
+        // Display suggestions
+        function displaySuggestions() {
+            suggestionsContainer.innerHTML = '';
+
+            if (allSuggestions.length > 0) {
+                // Display ghost text for the first suggestion
+                const text = textInput.value;
+                const lastWord = getLastWord(text);
+
+                // Only show inline suggestion if we're at the end of the text
+                if (textInput.selectionStart === text.length) {
+                    displayGhostText(allSuggestions[0]);
+                }
+
+                // Display all suggestions as clickable options
+                allSuggestions.forEach((suggestion, index) => {
+                    const suggestionElement = document.createElement('div');
+                    suggestionElement.classList.add('suggestion');
+                    suggestionElement.textContent = suggestion;
+
+                    suggestionElement.addEventListener('click', function () {
+                        acceptSuggestion(suggestion);
+                    });
+
+                    if (index === 0) {
+                        suggestionElement.style.fontWeight = 'bold';
+                    }
+
+                    suggestionsContainer.appendChild(suggestionElement);
+                });
+            }
+        }
+
+        // Display ghost text (inline suggestion)
+        // Display ghost text (inline suggestion)
+        // Display ghost text (inline suggestion)
+        function displayGhostText(suggestion) {
+            if (!suggestion) return;
+
+            const text = textInput.value;
+
+            // Clear any existing ghost text
+            ghostText.textContent = '';
+
+            // Calculate the position based on the current text
+            const cursorPos = textInput.selectionStart;
+            const textBeforeCursor = text.substring(0, cursorPos);
+
+            // Set the ghost text content
+            ghostText.textContent = suggestion;
+
+            // Position the ghost text element
+            const inputStyle = window.getComputedStyle(textInput);
+            const inputPadding = parseInt(inputStyle.paddingLeft);
+
+            // Create a temporary span to measure text width
+            const tempSpan = document.createElement('span');
+            tempSpan.style.visibility = 'hidden';
+            tempSpan.style.position = 'absolute';
+            tempSpan.style.fontSize = inputStyle.fontSize;
+            tempSpan.style.fontFamily = inputStyle.fontFamily;
+            tempSpan.style.whiteSpace = 'pre';
+            tempSpan.textContent = textBeforeCursor;
+
+            document.body.appendChild(tempSpan);
+            const textWidth = tempSpan.getBoundingClientRect().width;
+            document.body.removeChild(tempSpan);
+
+            // Calculate the position of the cursor
+            const leftOffset = inputPadding + textWidth;
+
+            // Set the ghost text position
+            ghostText.style.left = leftOffset + 'px';
+
+            // Store the current suggestion
+            currentSuggestion = suggestion;
+        }
+
+
+        // Accept the suggestion
+        function acceptSuggestion(suggestion) {
+            const text = textInput.value;
+            suggestion = suggestion || currentSuggestion;
+
+            if (!suggestion) return;
+
+            // Replace the current word with the suggestion
+            const cursorPos = textInput.selectionStart;
+            const textBeforeCursor = text.substring(0, cursorPos);
+            const textAfterCursor = text.substring(cursorPos);
+
+            const lastWordInfo = getLastWordWithBoundaries(textBeforeCursor);
+            const newText = textBeforeCursor.substring(0, lastWordInfo.start) +
+                suggestion + ' ' +
+                textAfterCursor;
+
+            textInput.value = newText;
+
+            // Position cursor after the inserted word
+            const newCursorPos = lastWordInfo.start + suggestion.length + 1;
+            textInput.setSelectionRange(newCursorPos, newCursorPos);
+
+            // Clear ghost text and get new suggestions
+            ghostText.textContent = '';
+            currentSuggestion = '';
+
+            // Trigger new suggestions
+            clearTimeout(typingTimer);
+            typingTimer = setTimeout(() => getSuggestions(textInput.value), doneTypingInterval);
+        }
+
+        // Get the last word from text
+        function getLastWord(text) {
+            const words = text.trim().split(/\s+/);
+            return words[words.length - 1] || '';
+        }
+
+        // Get the last word with its boundaries
+        function getLastWordWithBoundaries(text) {
+            const match = text.match(/(\S+)$/);
+            if (!match) return { word: '', start: text.length, end: text.length };
+
+            const word = match[0];
+            const start = text.length - word.length;
+            return { word, start, end: text.length };
+        }
+    </script>
+</body>
+
+</html>
